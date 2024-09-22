@@ -198,20 +198,37 @@ There is no exclusion restriction in the selection equation.
 group_sel <- c(1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5); group_out <- c(6,6,6,6,7,7,7,7,8,8,8,8,9,9,9,9,10,10,10,10)
 
 data(grHeckman)
+
 ## Not run:
+
 select <- ustar~X1+X2+X3+X4+X5+X6+X7+X8+ X9+X10+X11+X12+X13+X14+X15+X16+X17+X18+X19+X20
+
 outcome <- yobs~X1+X2+X3+X4+X5+X6+X7+X8+ X9+X10+X11+X12+X13+X14+X15+X16+X17+X18+X19+X20
+
 data(grHeckman); dd <- grHeckman
+
 mf <- model.frame(select, data = dd)
+
 s <- model.response(mf, "numeric")
+
 W <- model.matrix(select, data = dd)[,-1]
+
 mf2 <- model.frame(outcome, dd)
+
 y <- model.response(mf2, "numeric")
+
 X <- model.matrix(outcome, data = dd)[,-1]
+
 group_sel <- c(1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5)
+
 group_out <- c(6,6,6,6,7,7,7,7,8,8,8,8,9,9,9,9,10,10,10,10)
+
 #grlasso <- grHeckSelect(W=W, X=X, s=s, y=y, group_sel, group_out, penalty="grLasso")
+
 #coef(grlasso)
+
 #grbar <- grHeckSelect_bar(W,X,s,y,group_sel, group_out, method=2)
+
 ## End(Not run)
+
 #coef(grbar)
