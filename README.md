@@ -3,18 +3,16 @@ Description
 Group variable selection in nonignorable missing data using LASSO, SCAD and MCP.
 Usage
 Arguments
-W
-A matrix of covariates in selection equation (intercept is not included).
-X
-A matrix of covariates in outcome equation (intercept is not included).
-s
-Binary outcome for the selection equation (0/1 and false/true allowed).
-y
-Continuous outcome for the outcome equation (0 for NA).
-group_sel
-A vector describing the grouping of the coefficients in the selection equation. It is best if
-group is a vector of consecutive integers. If there are coefficients to be included in the
-model without being penalized, assign them to group 0.
+W: A matrix of covariates in selection equation (intercept is not included).
+
+X: A matrix of covariates in outcome equation (intercept is not included).
+
+s: Binary outcome for the selection equation (0/1 and false/true allowed).
+
+y: Continuous outcome for the outcome equation (0 for NA).
+
+group_sel: A vector describing the grouping of the coefficients in the selection equation. It is best if group is a vector of consecutive integers. If there are coefficients to be included in the model without being penalized, assign them to group 0.
+
 grHeckSelect(
 W,
 X,
