@@ -1,17 +1,12 @@
+##################################################################################
+# Group variable selection in nonignorable missing data using LASSO, SCAD and MCP.
+##################################################################################
+
+**Description**
+
 Group variable selection in nonignorable missing data using LASSO, SCAD and MCP.
-Description
-Group variable selection in nonignorable missing data using LASSO, SCAD and MCP.
-Usage
-Arguments
-W: A matrix of covariates in selection equation (intercept is not included).
 
-X: A matrix of covariates in outcome equation (intercept is not included).
-
-s: Binary outcome for the selection equation (0/1 and false/true allowed).
-
-y: Continuous outcome for the outcome equation (0 for NA).
-
-group_sel: A vector describing the grouping of the coefficients in the selection equation. It is best if group is a vector of consecutive integers. If there are coefficients to be included in the model without being penalized, assign them to group 0.
+**Usage**
 
 grHeckSelect(
 W,
@@ -34,60 +29,57 @@ penalty.factors = NULL
 )
 
 
-Arguments
-W
-A matrix of covariates in selection equation (intercept is not included).
-X
-A matrix of covariates in outcome equation (intercept is not included).
-s
-Binary outcome for the selection equation (0/1 and false/true allowed).
-y
-Continuous outcome for the outcome equation (0 for NA).
-group_sel
-A vector describing the grouping of the coefficients in the selection equation. It is best if
-group is a vector of consecutive integers. If there are coefficients to be included in the
+**Arguments**
+
+W: A matrix of covariates in selection equation (intercept is not included).
+
+X: A matrix of covariates in outcome equation (intercept is not included).
+
+s: Binary outcome for the selection equation (0/1 and false/true allowed).
+
+y: Continuous outcome for the outcome equation (0 for NA).
+
+group_sel: A vector describing the grouping of the coefficients in the selection equation. It is best if group is a vector of consecutive integers. If there are coefficients to be included in the
 model without being penalized, assign them to group 0.
 
-group_out
-A vector describing the grouping of the coefficients in the outcome equation. It is best if
-group is a vector of consecutive integers. If there are coefficients to be included in the
-model without being penalized, assign them to group 0.
-penalty
-The penalty to be applied to the model, one of grLasso, grSCAD, or grMCP.
-nlambda
-The number of lambda values. Default is 100.
-lambda
-A user supplied sequence of lambda values. Typically, this is left unspecified, and the
-function automatically computes a grid of lambda values.
-lambda.min
-The smallest value for lambda, as a fraction of lambda.max. Default is .001.
-log.lambda
-When TRUE compute the grid values of lambda on log scale (default) or linear scale
-otherwise.
-eps
-Convergence threshhold. Default is 1e-4
-max_iter
-Maximum number of iterations (total across entire path). Default is 10000.
-gamma
-Tuning parameter of the group MCP/SCAD penalty. Default is 3 for MCP and 4 for
-SCAD
-group_multiplier
-A vector of values representing multiplicative factors by which each group's penalty is to
-be multiplied. The default is the square root of group size.
-init_strat
-Use MLE to initialize the group descent algorithm otherwise use zeros.
-penalty.factors
-Allows for the use of weighted versions of grLasso, grSCAD, or grMCP.
-Value
-class grHeckSelect containing optimal penalized coefficients, lambda values, bic values etc.
-Examples
-Run examples
+group_out: A vector describing the grouping of the coefficients in the outcome equation. It is best if group is a vector of consecutive integers. If there are coefficients to be included in the model without being penalized, assign them to group 0.
+
+penalty: The penalty to be applied to the model, one of grLasso, grSCAD, or grMCP.
+
+nlambda: The number of lambda values. Default is 100.
+
+lambda: A user supplied sequence of lambda values. Typically, this is left unspecified, and the function automatically computes a grid of lambda values.
+
+lambda.min: The smallest value for lambda, as a fraction of lambda.max. Default is .001.
+
+log.lambda: When TRUE compute the grid values of lambda on log scale (default) or linear scale otherwise.
+
+eps: Convergence threshhold. Default is 1e-4
+
+max_iter: Maximum number of iterations (total across entire path). Default is 10000.
+
+gamma: Tuning parameter of the group MCP/SCAD penalty. Default is 3 for MCP and 4 for SCAD
+
+group_multiplier: A vector of values representing multiplicative factors by which each group's penalty is to be multiplied. The default is the square root of group size.
+
+init_strat: Use MLE to initialize the group descent algorithm otherwise use zeros.
+
+penalty.factors: Allows for the use of weighted versions of grLasso, grSCAD, or grMCP.
+
+Value: class grHeckSelect containing optimal penalized coefficients, lambda values, bic values etc.
+
+
+**Examples**
+
+*Run examples*
+
 #grHeckSelect(W=W, X=X, s=s, y=y, group_sel, group_out, penalty="grLasso")
 
+#######################################################################################
+# Group variable selection in nonignorable missing data using Broken Adaptive Ridge penalty.
+###########################################################################################
 
-#Group variable selection in nonignorable missing data using Broken Adaptive Ridge
-#penalty.
-Description
+**Description**
 
 Group variable selection in nonignorable missing data using Broken Adaptive Ridge penalty.
 Usage
