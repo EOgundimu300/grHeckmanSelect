@@ -1,0 +1,17 @@
+Package: grHeckmanSelect
+Type: Package
+Title: Group Heckman selection model
+Version: 0.1.0
+Author: Adam Iqbal, Emmanuel Ogundimu
+Maintainer: Emmanuel Ogundimu  <segun300l@yahoo.com>
+Description: Implements group Lasso, Adaptive Lasso, SCAD,MCP and Broken Adaptive Ridge methods for selection model (continuous outcome for now)
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+Imports:
+    sampleSelection,
+    MASS,
+    Matrix
+Depends: 
+    R (>= 2.10)
+RoxygenNote: 7.3.2

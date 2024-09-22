@@ -1,0 +1,71 @@
+
+
+#' Simulated data with group structure for Heckman model
+#'
+#' grHeckman was generated from bivariate normal error with correlation 0.5, and sigma^2 =2.
+#'
+#' There are 1000 observations and 20 predictors.
+#'
+#' outcome:  beta <- c(0.5, 1, 1, 1.5, 1,0.2, 0.2, 0.2, 0.2, 0.2, 0.5, 1, 1.5, 0, 0, 0, 0, 0, 0, 0, 0)
+#'
+#' selection: gamma <- c(2.7, 1, 1, 1.5, 1,0.2, 0.2, 0.2, 0.2, 0.2, 0.5, 1, 1.5, 0, 0, 0, 0, 0, 0, 0, 0)
+#'
+#' There is no exclusion restriction in the selection equation.
+#'
+#' Induce group sctructure: 
+#'
+#' group_sel <- c(1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5)
+#'
+#' group_out <- c(6,6,6,6,7,7,7,7,8,8,8,8,9,9,9,9,10,10,10,10)
+
+
+#'
+#' @usage data(grHeckman)
+#'
+#' @format A data frame with 1000 rows and 23 variables
+#' \describe{
+#'   \item{yobs}{observed outcome variable}
+#'   \item{ustar}{selection indicator}
+#'   \item{ymiss}{underlying outcome variable. It is not needed for the modelling}
+#'   \item{X1-X20}{predictor variables}
+#'
+#' }
+#'
+#' @keywords datasets
+#'
+#' @references Group variable selection for nonignorable missing data problems
+#' 
+#'
+#' @examples
+#' data(grHeckman)
+#'
+
+
+
+#' \dontrun{
+
+#' select <- ustar~X1+X2+X3+X4+X5+X6+X7+X8+ X9+X10+X11+X12+X13+X14+X15+X16+X17+X18+X19+X20
+#' outcome <-  yobs~X1+X2+X3+X4+X5+X6+X7+X8+ X9+X10+X11+X12+X13+X14+X15+X16+X17+X18+X19+X20
+#'  data(grHeckman);  dd <- grHeckman
+#' 
+
+#'    mf <- model.frame(select, data = dd)
+#'    s <- model.response(mf, "numeric")
+#'    W <- model.matrix(select, data = dd)[,-1]
+#'
+#'    mf2 <- model.frame(outcome, dd)
+#'    y <- model.response(mf2, "numeric")
+#'    X <- model.matrix(outcome, data = dd)[,-1]
+
+#' group_sel <- c(1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5)
+#' group_out <- c(6,6,6,6,7,7,7,7,8,8,8,8,9,9,9,9,10,10,10,10)
+
+#' #grlasso <- grHeckSelect(W=W, X=X, s=s, y=y, group_sel, group_out, penalty="grLasso")
+#'
+#' #coef(grlasso)
+#'
+#' #grbar <- grHeckSelect_bar(W,X,s,y,group_sel, group_out, method=2)}
+#' #coef(grbar)
+#'
+"grHeckman"
+
