@@ -25,9 +25,9 @@ grHeckSelect_bar(
   max_iter = 10000,
   init_strat = "MLE",
   del = 0.01,
-  threshold_sel = 0.05,
-  threshold_out = 0.05,
-  method = 1
+  threshold_sel = 0.005,
+  threshold_out = 0.005,
+  method = 2
 )
 }
 \arguments{
@@ -39,20 +39,20 @@ grHeckSelect_bar(
 
 \item{y}{Continuous outcome for the outcome equation (0 for NA).}
 
-\item{group_sel}{A vector describing the grouping of the coefficients in the selection equation. 
-It is best if group is a vector of consecutive integers. If there are coefficients to be included 
+\item{group_sel}{A vector describing the grouping of the coefficients in the selection equation.
+It is best if group is a vector of consecutive integers. If there are coefficients to be included
 in the model without being penalized, assign them to group 0.}
 
-\item{group_out}{A vector describing the grouping of the coefficients in the outcome equation. 
-It is best if group is a vector of consecutive integers. If there are coefficients to be included 
+\item{group_out}{A vector describing the grouping of the coefficients in the outcome equation.
+It is best if group is a vector of consecutive integers. If there are coefficients to be included
 in the model without being penalized, assign them to group 0.}
 
-\item{ridge_lambda}{A user supplied sequence of lambda values for the initial 
-ridge estimate. Typically, this is left unspecified, and the function automatically 
+\item{ridge_lambda}{A user supplied sequence of lambda values for the initial
+ridge estimate. Typically, this is left unspecified, and the function automatically
 computes a grid of lambda values.}
 
-\item{lambda}{A user supplied sequence of lambda values for 
-the BAR iteration. Typically, this is left unspecified, and the function automatically 
+\item{lambda}{A user supplied sequence of lambda values for
+the BAR iteration. Typically, this is left unspecified, and the function automatically
 computes a grid of lambda values.}
 
 \item{nridge_lambda}{The number of lambda values for the ridge. Default is 10.}
@@ -64,10 +64,10 @@ which leads to 500 combinations in the grid to test.}
 
 \item{lambda.min}{The smallest value for lambda in BAR iteration. The default is 0.001.}
 
-\item{log.ridge_lambda}{When TRUE compute the grid values of ridge_lambda on 
+\item{log.ridge_lambda}{When TRUE compute the grid values of ridge_lambda on
 log scale (default) or linear scale otherwise.}
 
-\item{log.lambda}{When TRUE compute the grid values of lambda on 
+\item{log.lambda}{When TRUE compute the grid values of lambda on
 log scale (default) or linear scale otherwise.}
 
 \item{ridge_eps}{The value fo tolerance used in intial ridge estimation.}
@@ -81,7 +81,7 @@ log scale (default) or linear scale otherwise.}
 \item{init_strat}{Use MLE to initialize the group descent algorithm otherwise use zeros.}
 
 \item{del}{threshold_sel The value for which to set parameter values with magnitude
-less than it to 0. Default is 0.05.}
+less than it to 0. Default is 0.005.}
 
 \item{threshold_out}{Same as threshold_sel.}
 

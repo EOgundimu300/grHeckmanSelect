@@ -1,10 +1,10 @@
 ##################################################################################
-# Group variable selection in nonignorable missing data using LASSO, SCAD and MCP.
+# Group variable selection in nonignorable missing data using LASSO, SCAD, MCP, SELO and SICA.
 ##################################################################################
 
 **Description**
 
-Group variable selection in nonignorable missing data using LASSO, SCAD and MCP.
+Group variable selection in nonignorable missing data using LASSO, SCAD, MCP, SELO and SICA.
 
 **Usage**
 
@@ -22,10 +22,11 @@ lambda.min = 0.001,
 log.lambda = TRUE,
 eps = 1e-04,
 max_iter = 10000,
-gamma = ifelse(penalty == "grSCAD", 4, 3),
+gamma,
+ngamma=100,
 group_multiplier,
-init_strat = "MLE",
-penalty.factors = NULL
+penalty.factors = NULL,
+unpenalized_fixed=FALSE
 )
 
 
@@ -44,7 +45,7 @@ model without being penalized, assign them to group 0.
 
 group_out: A vector describing the grouping of the coefficients in the outcome equation. It is best if group is a vector of consecutive integers. If there are coefficients to be included in the model without being penalized, assign them to group 0.
 
-penalty: The penalty to be applied to the model, one of grLasso, grSCAD, or grMCP.
+penalty: The penalty to be applied to the model, one of grLasso, grSCAD, grMCP, grSELO or grSICA.
 
 nlambda: The number of lambda values. Default is 100.
 
@@ -58,13 +59,13 @@ eps: Convergence threshhold. Default is 1e-4
 
 max_iter: Maximum number of iterations (total across entire path). Default is 10000.
 
-gamma: Tuning parameter of the group MCP/SCAD penalty. Default is 3 for MCP and 4 for SCAD
+gamma: Tuning parameter of the group MCP/SCAD/SELO/SICA penalty. Values can be chosen for grSCAD/grMCP/grSELO/grSICA within permitted range.However implemenation is based on a range of values.  
 
 group_multiplier: A vector of values representing multiplicative factors by which each group's penalty is to be multiplied. The default is the square root of group size.
 
-init_strat: Use MLE to initialize the group descent algorithm otherwise use zeros.
-
 penalty.factors: Allows for the use of weighted versions of grLasso, grSCAD, or grMCP.
+
+unpenalized_fixed: Whether variables that are unpenalized are fixed at the MLE or they are updated within the group gradient descent. Default is set to FALSE.
 
 Value: class grHeckSelect containing optimal penalized coefficients, lambda values, bic values etc.
 
@@ -105,9 +106,9 @@ inner_eps = 1e-04,
 max_iter = 10000,
 init_strat = "MLE",
 del = 0.01,
-threshold_sel = 0.05,
-threshold_out = 0.05,
-method = 1
+threshold_sel = 0.005,
+threshold_out = 0.005,
+method = 2
 )
 
 **Arguments**
@@ -150,11 +151,13 @@ max_iter: Maximum number of iterations (total across entire path). Default is 10
 
 init_strat: Use MLE to initialize the group descent algorithm otherwise use zeros.
 
-del: threshold_sel The value for which to set parameter values with magnitude less than it to 0. Default is 0.05.
+del: Prevents blow-ups: If a group’s current coefficients are (near) zero, the group norm is ~0; without del^2 the weight would be infinite.
 
-threshold_out: Same as threshold_sel.
+threshold_sel: The threshold value for selection equation for which to set parameters with magnitude less than it to 0. Default is 0.005.
 
-method: Three methods are implemented. Method 2 is the fastest (see details in accompanying paper).
+threshold_out: The threshold value for outcome equation for which to set parameters with magnitude less than it to 0. Default is 0.005.
+
+method: Two methods are implemented. Method 2 is the fastest and default (see details in accompanying paper).
 
 Value: class grHeckSelect_bar containing optimal penalized coefficients, lambda values, bic values etc.
 

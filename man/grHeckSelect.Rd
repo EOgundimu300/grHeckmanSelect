@@ -18,10 +18,11 @@ grHeckSelect(
   log.lambda = TRUE,
   eps = 1e-04,
   max_iter = 10000,
-  gamma = ifelse(penalty == "grSCAD", 4, 3),
+  gamma,
+  ngamma = 100,
   group_multiplier,
-  init_strat = "MLE",
-  penalty.factors = NULL
+  penalty.factors = NULL,
+  unpenalized_fixed = FALSE
 )
 }
 \arguments{
@@ -33,12 +34,12 @@ grHeckSelect(
 
 \item{y}{Continuous outcome for the outcome equation (0 for NA).}
 
-\item{group_sel}{A vector describing the grouping of the coefficients in the selection equation. 
-It is best if group is a vector of consecutive integers. If there are coefficients to be included 
+\item{group_sel}{A vector describing the grouping of the coefficients in the selection equation.
+It is best if group is a vector of consecutive integers. If there are coefficients to be included
 in the model without being penalized, assign them to group 0.}
 
-\item{group_out}{A vector describing the grouping of the coefficients in the outcome equation. 
-It is best if group is a vector of consecutive integers. If there are coefficients to be included 
+\item{group_out}{A vector describing the grouping of the coefficients in the outcome equation.
+It is best if group is a vector of consecutive integers. If there are coefficients to be included
 in the model without being penalized, assign them to group 0.}
 
 \item{penalty}{The penalty to be applied to the model, one of grLasso, grSCAD, or grMCP.}
@@ -46,7 +47,7 @@ in the model without being penalized, assign them to group 0.}
 \item{nlambda}{The number of lambda values. Default is 100.}
 
 \item{lambda}{A user supplied sequence of lambda values.
-Typically, this is left unspecified, and the function automatically 
+Typically, this is left unspecified, and the function automatically
 computes a grid of lambda values.}
 
 \item{lambda.min}{The smallest value for lambda, as a fraction of lambda.max. Default is .001.}
@@ -62,9 +63,9 @@ computes a grid of lambda values.}
 \item{group_multiplier}{A vector of values representing multiplicative factors by which each group's penalty is to be multiplied.
 The default is the square root of group size.}
 
-\item{init_strat}{Use MLE to initialize the group descent algorithm otherwise use zeros.}
-
 \item{penalty.factors}{Allows for the use of weighted versions of grLasso, grSCAD, or grMCP.}
+
+\item{init_strat}{Use MLE to initialize the group descent algorithm otherwise use zeros.}
 }
 \value{
 class grHeckSelect containing optimal penalized coefficients, lambda values,

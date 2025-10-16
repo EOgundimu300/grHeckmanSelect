@@ -1,0 +1,41 @@
+
+graph TD
+    A[Dataset] --> B{Traditional Models}
+    B -->|Limited by| C[Parametric Assumptions]
+    C --> D["Biased Outcomes"]
+    C --> E["Reduced Model Robustness"]
+    
+    A --> F{"ROSEMIND Framework"}
+    F -->|Addresses| G["Practical Non-identifiability Challenges"]
+    G --> H["Weak Exclusion Restrictions"]
+    G --> I["Multicollinearity"]
+    G --> J["Small Sample Sizes"]
+    G --> K["Limited Data Variation"]
+    
+    F -->|Integrates| L["Non-parametric Methods"]
+    F -->|Integrates| M["Semi-parametric Methods"]
+    L --> N["Enhanced Model Robustness"]
+    M --> N
+    
+    F -->|Introduces| O["Advanced Sensitivity Analysis"]
+    O --> P["Local Sensitivity to Nonignorable Missingness"]
+    
+    F -->|Tackles| Q["Model Misspecification"]
+    F -->|Tackles| R["Measurement Errors"]
+    
+    N --> S["Improved Causal Inference"]
+    P --> S
+    Q --> S
+    R --> S
+    
+    S --> T["Enhanced Validity of Research Findings"]
+    S --> U["Reliable Policy-making"]
+    S --> V["Effective Intervention Design"]
+    
+    style F fill:#f9f,stroke:#333,stroke-width:2px
+    style N fill:#bfb,stroke:#333,stroke-width:2px
+    style S fill:#bfb,stroke:#333,stroke-width:2px
+    style T fill:#bfb,stroke:#333,stroke-width:2px
+    style U fill:#bfb,stroke:#333,stroke-width:2px
+    style V fill:#bfb,stroke:#333,stroke-width:2px
+

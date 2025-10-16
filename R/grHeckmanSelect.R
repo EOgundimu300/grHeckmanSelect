@@ -1,8 +1,8 @@
 
 
 ################################################################################
-# Function for group variable selection in FIML estimator of Heckman model.  
-# Group Lasso, Adaptive LASSO, SCAD and MCP are implemented. 
+# Function for group variable selection in FIML estimator of Heckman model.
+# Group Lasso, Adaptive LASSO, SCAD, MCP, SELO and SICA are implemented.
 # The code can also be used for individual penalization where each variable
 # is taken to belong to its own group in a highly computationally efficient way.
 ###################################################################################
@@ -13,15 +13,15 @@
 #' @param X A matrix of covariates in outcome equation (intercept is not included).
 #' @param s Binary outcome for the selection equation (0/1 and false/true allowed).
 #' @param y Continuous outcome for the outcome equation (0 for NA).
-#' @param group_sel A vector describing the grouping of the coefficients in the selection equation. 
-#' It is best if group is a vector of consecutive integers. If there are coefficients to be included 
+#' @param group_sel A vector describing the grouping of the coefficients in the selection equation.
+#' It is best if group is a vector of consecutive integers. If there are coefficients to be included
 #' in the model without being penalized, assign them to group 0.
-#' @param group_out A vector describing the grouping of the coefficients in the outcome equation. 
-#' It is best if group is a vector of consecutive integers. If there are coefficients to be included 
+#' @param group_out A vector describing the grouping of the coefficients in the outcome equation.
+#' It is best if group is a vector of consecutive integers. If there are coefficients to be included
 #' in the model without being penalized, assign them to group 0.
 #' @param nlambda The number of lambda values. Default is 100.
 #' @param lambda A user supplied sequence of lambda values.
-#' Typically, this is left unspecified, and the function automatically 
+#' Typically, this is left unspecified, and the function automatically
 #' computes a grid of lambda values.
 #' @param penalty The penalty to be applied to the model, one of grLasso, grSCAD, or grMCP.
 #' @param lambda.min The smallest value for lambda, as a fraction of lambda.max. Default is .001.
@@ -45,17 +45,19 @@
 
 #'
 
-grHeckSelect <- function(W, X, s, y, group_sel, group_out, penalty="grLasso",
+grHeckSelect <- function(W,X,s,y, group_sel, group_out, penalty="grLasso",
                         nlambda=100,lambda,lambda.min=0.001,log.lambda=TRUE,
                         eps=1e-4,max_iter=10000,
-                        gamma=ifelse(penalty=="grSCAD",4,3), group_multiplier,
-                        init_strat = "MLE",penalty.factors=NULL){
+                        gamma, ngamma=100, group_multiplier,
+                        penalty.factors=NULL,
+                        unpenalized_fixed=FALSE){
   require(sampleSelection)
+
   group <- c(0,group_sel,0,group_out,0,0)
-  
+
   if(is.null(colnames(W))) colnames(W) <- paste("W",1:ncol(W),sep='')
-  if(is.null(colnames(X))) colnames(X) <- paste("X",1:ncol(X),sep='')
-  joint_dat <- data.frame(cbind(W,X))
+  if(is.null(colnames(X))) colnames(X) <- paste("W",1:ncol(X),sep='')
+  joint_dat <- data.frame(cbind(y,s,W,X))
   s_form <- as.formula(paste("s ~",paste(colnames(W),collapse=" + ")))
   y_form <- as.formula(paste("y ~",paste(colnames(X),collapse=" + ")))
   nongroup_fit <- selection(s_form, y_form, data = joint_dat)
@@ -70,49 +72,63 @@ grHeckSelect <- function(W, X, s, y, group_sel, group_out, penalty="grLasso",
                      wO=cbind(1,W[s==1,]),
                      xO=cbind(1,X[s==1,]),
                      yO=y[s==1])
+
   hesseig <- eigen(hess)
-  pseudoX <- hesseig$vectors %*% diag((hesseig$values) ** (1/2)) %*% t(hesseig$vectors)
+  eigvals <- hesseig$values
+  if(any(eigvals<0)){
+    eigvals <- makePD(hess)
+  }
+  pseudoX <- hesseig$vectors %*% diag((eigvals) ** (1/2)) %*% t(hesseig$vectors)
   pseudoY <- pseudoX %*% est_params
-  
+
   if(penalty=="grLasso"){
     penalty_fun <- lasso_pen
   } else if(penalty=="grMCP"){
     penalty_fun <- mcp_pen
   } else if(penalty=="grSCAD"){
     penalty_fun <- scad_pen
+  } else if(penalty=="grSICA"){
+    penalty_fun <- sica_pen
+  } else if(penalty=="grSELO"){
+    penalty_fun <- selo_pen
   } else{
     print("Unrecognized penalty - using grLasso")
     penalty_fun <- lasso_pen
   }
-  
+
   if(is.null(penalty.factors)){
     penalty.factors <- rep(1,length(est_params))
   }
-  
+
   scale <- apply(pseudoX, 2, function(x){sqrt(sum(x**2)/nrow(pseudoX))})
   XX <- pseudoX %*% diag(1/scale)
-  
+
   g_order <- order(group)
   g_order_inv <- match(1:length(group),g_order)
-  
+
   XX_ord <- XX[,g_order]
-  
+
   g <- group[g_order]
-  
+
   XX_orth <- orthogonalize(XX_ord,g)
+  g <- attr(XX_orth, "group")
   K <- as.integer(table(g))
   K1 <- cumsum(K)
   K0 = K1[1]
-  
+
   if(missing(group_multiplier)) group_mult = sqrt(K)[-1]
-  
+
   if(missing(lambda)){
     fity <- glm(pseudoY~XX_orth[, g==0]-1 , family="gaussian")
     r <- fity$residuals
     zmax <- maxgrad(XX_orth, r, K1, group_mult)/nrow(XX_orth)
-    
+
     lambda.max = zmax
-    
+
+    if((penalty=="grSELO") || (penalty=="grSICA")){
+      lambda.max <- 4 * lambda.max
+    }
+
     if (log.lambda) {
       if (lambda.min==0) {
         lambda <- c(exp(seq(log(lambda.max), log(0.001*lambda.max), length=nlambda-1)), 0)
@@ -127,7 +143,21 @@ grHeckSelect <- function(W, X, s, y, group_sel, group_out, penalty="grLasso",
       }
     }
   }
-  
+
+  if(missing(gamma)){
+    if((penalty=="grMCP") || (penalty=="grSCAD")){
+      gamma_min <- 0.5
+      gamma_max <- 5
+      gamma <- exp(seq(log(gamma_min),log(gamma_max),length.out=ngamma))
+    } else if((penalty=="grSELO") || (penalty=="grSICA")){
+      gamma_min <- 1e-4
+      gamma_max <- 0.1
+      gamma <- exp(seq(log(gamma_min),log(gamma_max),length.out=ngamma))
+    } else{
+      gamma <- 0
+    }
+  }
+
   # if(init_strat=="MLE"){
   #   init_b <- est_params
   #   init_b <- init_b*scale
@@ -136,55 +166,81 @@ grHeckSelect <- function(W, X, s, y, group_sel, group_out, penalty="grLasso",
   # } else{
   #   init_b <- rep(0,ncol(XX_orth))
   # }
-  
   fity2 <- glm(pseudoY~XX_orth-1, family="gaussian")
   init_b <- fity2$coefficients
-  
-  
-  fit_out <- my_gdfit(XX_orth, pseudoY, penalty_fun, K1, K0, lambda, gamma, eps,
-                      max_iter, group_mult, init_b, penalty.factors)
+
+  llam <- length(lambda)
+  lpsi <- length(gamma)
+  gamma_extend <- rep(gamma, each=llam)
+  lambda_extend <- rep(lambda, lpsi)
+
+  fit_out <- my_gdfit(XX_orth, pseudoY, penalty_fun, K1, K0, lambda_extend, gamma_extend, eps,
+                      max_iter, group_mult, init_b, penalty.factors, unpenalized_fixed)
   iterations <- fit_out$iterations
-  beta <- fit_out$beta
-  beta <- unorthogonalize(beta, XX_orth, g, intercept=FALSE)
-  beta <- beta[g_order_inv,]
-  beta <- apply(beta,2,function(x){return(x/scale)})
-  
-  loss <- apply(beta,2,loglik_new,
+  theta <- fit_out$beta
+  theta <- unorthogonalize(theta, XX_orth, g, intercept=FALSE)
+  theta <- theta[g_order_inv,]
+
+  theta <- apply(theta,2,function(x){return(x/scale)})
+
+  loss <- apply(theta,2,loglik_new,
                 wS=cbind(1,W[s==0,]),
                 wO=cbind(1,W[s==1,]),
                 xO=cbind(1,X[s==1,]),
                 yO=y[s==1])
-  df <- apply(beta,2,function(x){return(sum(x!=0))}) - 4
+
+  rownames(theta) <- c("(Intercept)",colnames(W),"(Intercept)",colnames(X),"sigma","rho")
+  df <- apply(theta,2,function(x){return(sum(x!=0))}) - 4
+  theta[pS+pO+2,] = tanh(theta[pS+pO+2,])
+  theta[pS+pO+1,] = exp(-theta[pS+pO+1,])
+  theta[(pS+1):(pS+pO),] = theta[(pS+1):(pS+pO),]*theta[pS+pO+1,]
+
   bic <- df*log(nrow(X)) - 2*loss
-  
-  rownames(beta) <- rownames(nongroup_fit$hess)
-  
-  beta[pS+pO+2,] = tanh(beta[pS+pO+2,])
-  beta[pS+pO+1,] = exp(-beta[pS+pO+1,])
-  beta[(pS+1):(pS+pO),] = beta[(pS+1):(pS+pO),]*beta[pS+pO+1,]
-  
+
   best_idx <- which(bic == min(bic))
-  opt_params <- beta[,best_idx]
-  opt_lambda <- lambda[best_idx]
+  if(length(best_idx)>1){
+    max_lam <- max(lambda_extend[best_idx])
+    best_idx <- (best_idx[lambda_extend[best_idx]==max_lam])[1]
+  }
+  # opt_params <- theta[,best_idx]
+  opt_lambda <- lambda_extend[best_idx]
+  opt_gamma <- gamma_extend[best_idx]
   opt_bic <- min(bic)
-  
-  out <- list(params=beta,
+
+  hyper_grid <- cbind(lambda_extend,gamma_extend,bic)
+  colnames(hyper_grid) <- c("lambda","gamma","BIC")
+
+  selection_params <- theta[(1:pS),]
+  outcome_params <- theta[((pS+1):(pS+pO)),]
+  sigma_params <- theta[pS+pO+1,]
+  rho_params <- theta[pS+pO+2,]
+  opt_selection_params <- selection_params[,best_idx]
+  opt_outcome_params <- outcome_params[,best_idx]
+  opt_sigma <-sigma_params[best_idx]
+  opt_rho <- rho_params[best_idx]
+  params_out <- list(selection=selection_params,outcome=outcome_params,sigma=sigma_params,rho=rho_params)
+  opt_params_out <- list(selection=opt_selection_params,outcome=opt_outcome_params,sigma=opt_sigma,rho=opt_rho)
+
+  out <- list(params=params_out,
               group=group,
               lambda=lambda,
+              gamma=gamma,
+              hyper_grid=hyper_grid,
               df=df,
               loss=loss,
               bic=bic,
               penalty=penalty,
               n=nrow(X),
               iter=iterations,
-              opt_params=opt_params,
+              opt_params=opt_params_out,
               opt_lambda=opt_lambda,
+              opt_gamma=opt_gamma,
               opt_bic=opt_bic)
-  
               class(out) <- "grHeckSelect"
 
   return(out)
 }
+
 
 
 #grlasso <- grHeckSelect(W=W, X=X, s=s, y=y, group_sel, group_out, penalty="grLasso")
@@ -216,9 +272,10 @@ return(x)
 
 
 
-my_gdfit <- function(X, y, penalty_fun, K1, K0, lambda, gamma, eps, 
-                     max_iter, group_mult, init_b, penalty.factors){
-  
+my_gdfit <- function(X, y, penalty_fun, K1, K0, lambda, gamma, eps,
+                     max_iter, group_mult, init_b, penalty.factors,
+                     unpenalized_fixed=TRUE){
+
   n <- nrow(X)
   sdy <- sqrt(sum(y**2)/n)
   tol <- eps*sdy
@@ -226,33 +283,34 @@ my_gdfit <- function(X, y, penalty_fun, K1, K0, lambda, gamma, eps,
   iter_list <- rep(0,length(lambda))
   new_init_b <- init_b
   for(l in 1:length(lambda)){
-    
+
     b <- new_init_b
     new_b <- b
     r <- y - X %*% b
-    
+
     lam <- lambda[l]
     converged <- FALSE
     total_iter <- 0
     while(total_iter < max_iter){
       total_iter = total_iter + 1
       maxchange = 0
-      
-      # This commented bit is the co-ordinate descent for unpenalized parameters that performs very poorly for some reason
-      # for(j in 1:K0){
-      #   shift = 1/n * sum(X[,j] * r)
-      #   new_b[j] = shift + b[j]
-      #   r = r - shift * X[,j]
-      #   if(abs(shift) > maxchange){
-      #     maxchange = abs(shift)
-      #   }
-      # }
-      
+
+      if(unpenalized_fixed==FALSE){
+        for(j in 1:K0){
+          shift = 1/n * sum(X[,j] * r)
+          new_b[j] = shift + b[j]
+          r = r - shift * X[,j]
+          if(abs(shift) > maxchange){
+            maxchange = abs(shift)
+          }
+        }
+      }
+
       for(g in 1:(length(K1) - 1)){
         j_cols <- (K1[g]+1):K1[g+1]
         lam_temp <- lam * group_mult[g]
         lam_temp = lam_temp * penalty.factors[g]
-        list_temp <- my_gd(b, X, r, j_cols, n, penalty_fun, lam_temp, gamma)
+        list_temp <- my_gd(b, X, r, j_cols, n, penalty_fun, lam_temp, gamma[l])
         new_b[j_cols] = list_temp$b[j_cols]
         r = list_temp$r
         if(list_temp$maxchange > maxchange){
@@ -268,7 +326,6 @@ my_gdfit <- function(X, y, penalty_fun, K1, K0, lambda, gamma, eps,
     output_b[,l] = b
     if(converged == FALSE){
       print(paste("Non convergence for", lambda[l]))
-      print(b)
     } else{
       new_init_b <- b
     }
@@ -319,6 +376,39 @@ mcp_pen <- function(z,lam,gamma){
   }
 }
 
+# ---- Robust SICA prox (handles missing/complex roots gracefully) ----
+sica_pen <- function(z, lam, gamma) {
+  # Polynomial: x^3 + b x^2 + c x + d = 0
+  # Coeffs from your derivation:
+  b <- 2*gamma - z
+  c <- gamma**2 - 2*gamma*z
+  d <- lam*gamma*(gamma + 1) - gamma**2 * z
+
+  root <- tryCatch(polyroot(c(d, c, b, 1)), error = function(e) NA)
+  if (any(is.na(root))) return(0)
+
+  prox <- Re(root)[abs(Im(root)) < 1e-10]
+  prox <- if (length(prox)) max(prox) else 0
+  prox <- ifelse(is.finite(prox) & prox > 0, prox, 0)
+  return(as.numeric(prox))
+}
+
+# ---- Robust SELO prox (handles missing/complex roots gracefully) ----
+selo_pen <- function(z, lam, gamma) {
+  # Polynomial: 2 x^3 + b x^2 + c x + d = 0
+  b <- 3*gamma - 2*z
+  c <- gamma**2 - 3*gamma*z
+  d <- lam * gamma / log(2) - gamma**2 * z
+
+  root <- tryCatch(polyroot(c(d, c, b, 2)), error = function(e) NA)
+  if (any(is.na(root))) return(0)
+
+  prox <- Re(root)[abs(Im(root)) < 1e-10]
+  prox <- if (length(prox)) max(prox) else 0
+  prox <- ifelse(is.finite(prox) & prox > 0, prox, 0)
+  return(as.numeric(prox))
+}
+
 orthogonalize <- function(X, group) {
   n <- nrow(X)
   J <- max(group)
@@ -340,20 +430,27 @@ orthogonalize <- function(X, group) {
   XX
 }
 
-
-unorthogonalize <- function(b, XX, group, intercept=TRUE) {
+unorthogonalize <- function(b, XX, group, intercept = TRUE) {
   require(Matrix)
   ind <- !sapply(attr(XX, "T"), is.null)
+
+  # guard: nothing to unorthogonalize
+  if (!any(ind)) return(b)
+
   T <- bdiag(attr(XX, "T")[ind])
+
   if (intercept) {
-    ind0 <- c(1, 1+which(group==0))
-    val <- Matrix::as.matrix(rbind(b[ind0, , drop=FALSE], T %*% b[-ind0, , drop=FALSE]))
-  } else if (sum(group==0)) {
-    ind0 <- which(group==0)
-    val <- Matrix::as.matrix(rbind(b[ind0, , drop=FALSE], T %*% b[-ind0, , drop=FALSE]))
+    ind0 <- c(1, 1 + which(group == 0))
+    val <- Matrix::as.matrix(rbind(b[ind0, , drop = FALSE],
+                                   T %*% b[-ind0, , drop = FALSE]))
+  } else if (sum(group == 0)) {
+    ind0 <- which(group == 0)
+    val <- Matrix::as.matrix(rbind(b[ind0, , drop = FALSE],
+                                   T %*% b[-ind0, , drop = FALSE]))
   } else {
     val <- as.matrix(T %*% b)
   }
+  return(val)
 }
 
 
@@ -361,39 +458,38 @@ standardize <- function(X) {
   # Get dimensions
   n <- nrow(X)
   p <- ncol(X)
-  
+
   # Initialize result matrices and vectors
   XX <- matrix(0, n, p)
   c <- numeric(p)
   s <- numeric(p)
-  
+
   # Convert to matrices
   X <- as.matrix(X)
   XX <- as.matrix(XX)
   c <- as.vector(c)
   s <- as.vector(s)
-  
+
   for (j in seq_len(p)) {
     # Center
     c[j] <- mean(X[, j])
     XX[, j] <- X[, j] - c[j]
-    
+
     # Scale
     s[j] <- sqrt(mean(XX[, j]^2))
     XX[, j] <- XX[, j] / s[j]
   }
-  
+
   # Return list
   res <- list(XX = XX, c = c, s = s)
   return(res)
 }
 
-
 maxgrad <- function(X, y, K, m) {
   n <- nrow(X)
   J <- length(K) - 1
   zmax <- 0
-  
+
   for (g in 1:J) {
     Kg <- K[g+1] - K[g]
     Z <- numeric(Kg)
@@ -406,6 +502,7 @@ maxgrad <- function(X, y, K, m) {
   return(zmax)
 }
 
+
 loglik_new <- function(params, wS, wO, xO, yO) {
   pS = ncol(wS)
   pO = ncol(xO)
@@ -417,27 +514,26 @@ loglik_new <- function(params, wS, wO, xO, yO) {
   #  rho = atanh(params[pS + pO + 2])
   sigma = params[pS+pO+1]
   rho = params[pS+pO+2]
-  
+
   res0 = -1 * (wS %*% alpha)
   res1 = wO %*% alpha
   res2 = exp(sigma)*yO - (xO %*% beta)
   res3 = cosh(rho)*res1 + sinh(rho)*res2
-  
+
   res0 = pnorm(res0,log.p=TRUE)
   res3 = pnorm(res3,log.p=TRUE)
-  
-  
+
+
   out = sum(res0) + sum(res3) - sum(res2*res2) / 2 + nO * (sigma - log(2*pi)/2)
   return(out)
 }
 
 
 
+
 ############################################################################
 # grBAR selection begins from here
 ############################################################################
-
-
 ridge_ssel <- function(W, X, s, y, group_sel, group_out,
                        nlambda=100,lambda,lambda.min=1e-3,log.lambda=TRUE,
                        eps=1e-4,max_iter=10000,
@@ -446,11 +542,11 @@ ridge_ssel <- function(W, X, s, y, group_sel, group_out,
   group <- c(0,group_sel,0,group_out,0,0)
   pS <- ncol(W) + 1
   pO <- ncol(X) + 1
-  
+
   if(init_strat == "MLE"){
     if(is.null(colnames(W))) colnames(W) <- paste("W",1:ncol(W),sep='')
-    if(is.null(colnames(X))) colnames(X) <- paste("X",1:ncol(X),sep='')
-    joint_dat <- data.frame(cbind(W,X))
+    if(is.null(colnames(X))) colnames(X) <- paste("W",1:ncol(X),sep='')
+    joint_dat <- data.frame(cbind(s,y,W,X))
     s_form <- as.formula(paste("s ~",paste(colnames(W),collapse=" + ")))
     y_form <- as.formula(paste("y ~",paste(colnames(X),collapse=" + ")))
     nongroup_fit <- selection(s_form, y_form, data = joint_dat)
@@ -463,12 +559,12 @@ ridge_ssel <- function(W, X, s, y, group_sel, group_out,
   else{
     init <- rep(0, length(group))
   }
-  
+
   wS <- cbind(1,W[s==0,])
   wO <- cbind(1,W[s==1,])
   xO <- cbind(1,X[s==1,])
   yO <- y[s==1]
-  
+
   twS <- t(wS)
   twO <- t(wO)
   txO <- t(xO)
@@ -477,21 +573,21 @@ ridge_ssel <- function(W, X, s, y, group_sel, group_out,
     hesseig <- eigen(hess)
     pseudoX <- hesseig$vectors %*% diag((hesseig$values) ** (1/2)) %*% t(hesseig$vectors)
     pseudoY <- pseudoX %*% est_params
-    
+
     fity <- glm(pseudoY~pseudoX[, group==0]-1 , family="gaussian")
     r <- fity$residuals
-    
+
     lambda.max <- 0
-    
+
     for(j in 1:max(group)){
       temp_vec <- pseudoX[group==j,]%*%r
       groupgrad <- sum(solve(hess[group==j,group==j], temp_vec)*temp_vec)/sum(group==j)
-      
+
       if(groupgrad > lambda.max){
         lambda.max = groupgrad
       }
     }
-    
+
     if(log.lambda==TRUE){
       lambda = exp(seq(log(lambda.max*lambda.min), log(lambda.max), length.out=nlambda))
     } else{
@@ -502,33 +598,35 @@ ridge_ssel <- function(W, X, s, y, group_sel, group_out,
   new_init <- init
   iter_list <- rep(0,length(lambda))
   out_params <- matrix(0,nrow=length(init),ncol=length(lambda))
-  
+
 
   for(i in 1:length(lambda)){
-    
+
     current_lambda = lambda[i]
-    
+
     out_list <- tryCatch({ridgefit(wS, wO, xO, yO, current_lambda, eps, max_iter,
-                         new_init, penalty_weights, twS, twO, txO)}, error=function(e){return(NA)})
-    
-    if(is.na(out_list)){
+                                   new_init, penalty_weights, twS, twO, txO)}, error=function(e){return(NA)})
+
+    if(any(is.na(out_list))){
       out_params[,i] <- rep(NA, length(init))
+      iter_list[i] = NA
+      next
     }
-    
+
     if(out_list$converged==TRUE){
       new_init <- out_list$params
     }
-    
+
     out_params[,i] <- out_list$params
     iter_list[i] <- out_list$iter
   }
-  
+
   loss <- rep(NA,ncol(out_params))
   bic <- rep(NA,ncol(out_params))
   df <- rep(NA,ncol(out_params))
-  
+
   valid_idx <- which(!is.na(out_params[1,]))
-  
+
   # In the case all of the iterations ran into errors
   if(length(valid_idx)==0){
     out <- list(params=out_params,
@@ -543,57 +641,70 @@ ridge_ssel <- function(W, X, s, y, group_sel, group_out,
                 opt_bic=NA)
     return(out)
   }
-  
+
   valid_params <- out_params[,valid_idx]
-  
-  
+
+
   sel_idx <- (1:pS)[group[1:pS]!=0]
   out_idx <- ((pS+1):(pS+pO))[group[((pS+1):(pS+pO))]!=0]
-  
+
   out_params[sel_idx,] = ifelse(abs(out_params[sel_idx,])>threshold_sel,out_params[sel_idx,],0)
   out_params[out_idx,] = ifelse(abs(out_params[out_idx,]*exp(-out_params[pS+pO+1,]))>threshold_out,out_params[out_idx,],0)
-  
+
   loss[valid_idx] <- apply(valid_params,2,loglik_new,
                            wS=cbind(1,W[s==0,]),
                            wO=cbind(1,W[s==1,]),
                            xO=cbind(1,X[s==1,]),
                            yO=y[s==1])
-  
+
   df[valid_idx] <- apply(valid_params,2,function(x){return(sum(x!=0))}) - 4
   bic[valid_idx] <- df[valid_idx]*log(nrow(X)) - 2*loss[valid_idx]
   valid_params[pS+pO+2,] = tanh(valid_params[pS+pO+2,])
   valid_params[pS+pO+1,] = exp(-valid_params[pS+pO+1,])
   valid_params[(pS+1):(pS+pO),] = valid_params[(pS+1):(pS+pO),]*valid_params[pS+pO+1,]
-  
+
   out_params[,valid_idx] <- valid_params
-  
-  best_idx <- which(bic == min(bic,na.rm=TRUE))
-  opt_params <- out_params[,best_idx]
-  opt_ridge_lambda <- ridge_lambda_extend[best_idx]
-  opt_lambda <- lambda_extend[best_idx]
-  opt_bic <- min(bic)
-  
-  out <- list(params=out_params,
+
+  rownames(out_params) <- c("(Intercept)", colnames(W), "(Intercept)", colnames(X), "sigma", "rho")
+  selection_params <- out_params[(1:pS), , drop = FALSE]
+  outcome_params   <- out_params[((pS+1):(pS+pO)), , drop = FALSE]
+  sigma_params     <- out_params[pS+pO+1, , drop = FALSE]
+  rho_params       <- out_params[pS+pO+2, , drop = FALSE]
+
+  best_idx <- which(bic == min(bic, na.rm = TRUE))[1L]
+  opt_selection_params <- selection_params[, best_idx, drop = FALSE]
+  opt_outcome_params   <- outcome_params[,   best_idx, drop = FALSE]
+  opt_sigma            <- as.numeric(sigma_params[best_idx])
+  opt_rho              <- as.numeric(rho_params[best_idx])
+
+  params_out     <- list(selection=selection_params, outcome=outcome_params, sigma=sigma_params, rho=rho_params)
+  opt_params_out <- list(selection=opt_selection_params, outcome=opt_outcome_params, sigma=opt_sigma, rho=opt_rho)
+
+  opt_lambda <- lambda[best_idx]
+  opt_bic    <- min(bic, na.rm = TRUE)
+
+  out <- list(params=params_out,
               lambda=lambda,
               df=df,
               loss=loss,
               bic=bic,
               n=nrow(X),
               iter=iter_list,
-              opt_params=opt_params,
+              opt_params=opt_params_out,
               opt_lambda=opt_lambda,
               opt_bic=opt_bic)
   return(out)
 }
 
+
 ##########################
 
 
 ##########################################################################
-# Function for group variable selection in FIML estimator of Heckman model.  
-# Group Broken Adaptive Ridge (BAR) Regression method has been implemented. 
+# Function for group variable selection in FIML estimator of Heckman model.
+# Group Broken Adaptive Ridge (BAR) Regression method has been implemented.
 # The code can also be used for individual penalization where each variable
-# is taken to belong to its own group. 
+# is taken to belong to its own group.
 ###########################################################################
 
 
@@ -603,17 +714,17 @@ ridge_ssel <- function(W, X, s, y, group_sel, group_out,
 #' @param X A matrix of covariates in outcome equation (intercept is not included).
 #' @param s Binary outcome for the selection equation (0/1 and false/true allowed).
 #' @param y Continuous outcome for the outcome equation (0 for NA).
-#' @param group_sel A vector describing the grouping of the coefficients in the selection equation. 
-#' It is best if group is a vector of consecutive integers. If there are coefficients to be included 
+#' @param group_sel A vector describing the grouping of the coefficients in the selection equation.
+#' It is best if group is a vector of consecutive integers. If there are coefficients to be included
 #' in the model without being penalized, assign them to group 0.
-#' @param group_out A vector describing the grouping of the coefficients in the outcome equation. 
-#' It is best if group is a vector of consecutive integers. If there are coefficients to be included 
+#' @param group_out A vector describing the grouping of the coefficients in the outcome equation.
+#' It is best if group is a vector of consecutive integers. If there are coefficients to be included
 #' in the model without being penalized, assign them to group 0.
-#' @param ridge_lambda A user supplied sequence of lambda values for the initial 
-#' ridge estimate. Typically, this is left unspecified, and the function automatically 
+#' @param ridge_lambda A user supplied sequence of lambda values for the initial
+#' ridge estimate. Typically, this is left unspecified, and the function automatically
 #' computes a grid of lambda values.
-#' @param lambda A user supplied sequence of lambda values for 
-#' the BAR iteration. Typically, this is left unspecified, and the function automatically 
+#' @param lambda A user supplied sequence of lambda values for
+#' the BAR iteration. Typically, this is left unspecified, and the function automatically
 #' computes a grid of lambda values.
 
 #' @param nridge_lambda The number of lambda values for the ridge. Default is 10.
@@ -622,9 +733,9 @@ ridge_ssel <- function(W, X, s, y, group_sel, group_out,
 
 #' @param ridge_lambda.min The smallest value of ridge_lambda. The default is 0.001.
 #' @param lambda.min The smallest value for lambda in BAR iteration. The default is 0.001.
-#' @param log.ridge_lambda When TRUE compute the grid values of ridge_lambda on 
+#' @param log.ridge_lambda When TRUE compute the grid values of ridge_lambda on
 #' log scale (default) or linear scale otherwise.
-#' @param log.lambda When TRUE compute the grid values of lambda on 
+#' @param log.lambda When TRUE compute the grid values of lambda on
 #' log scale (default) or linear scale otherwise.
 #' @param ridge_eps The value fo tolerance used in intial ridge estimation.
 #' @param eps The tolerance between BAR iteration.
@@ -634,7 +745,7 @@ ridge_ssel <- function(W, X, s, y, group_sel, group_out,
 #' @param del Use to avoid numerical overflow. Default is 0.01. See the paper for details.
 
 #' @param del threshold_sel The value for which to set parameter values with magnitude
-#' less than it to 0. Default is 0.05.
+#' less than it to 0. Default is 0.005.
 #' @param threshold_out Same as threshold_sel.
 #' @param method Three methods are implemented. Method 2 is the fastest (see details
 #' in accompanying paper).
@@ -650,22 +761,22 @@ ridge_ssel <- function(W, X, s, y, group_sel, group_out,
 
 
 grHeckSelect_bar <- function(W, X, s, y, group_sel, group_out,
-                     ridge_lambda,lambda,
-                     nridge_lambda=10,nlambda=50,
-                     ridge_lambda.min=1e-3,lambda.min=1e-3,
-                     log.ridge_lambda=TRUE,log.lambda=TRUE,
-                     ridge_eps=1e-4,eps=1e-4,inner_eps=1e-4,max_iter=10000,
-                     init_strat = "MLE", del=1e-2, threshold_sel = 0.05,
-                     threshold_out=0.05, method=1){
-  
+                                         ridge_lambda,lambda,
+                                         nridge_lambda=10,nlambda=50,
+                                         ridge_lambda.min=1e-3,lambda.min=1e-3,
+                                         log.ridge_lambda=TRUE,log.lambda=TRUE,
+                                         ridge_eps=1e-4,eps=1e-4,inner_eps=1e-4,max_iter=10000,
+                                         init_strat = "MLE", del=1e-2, threshold_sel = 0.005,
+                                         threshold_out=0.005, method=2){
+
   require(sampleSelection)
   group <- c(0,group_sel,0,group_out,0,0)
   pS <- ncol(W) + 1
   pO <- ncol(X) + 1
-  
+
   if(init_strat == "MLE"){
     if(is.null(colnames(W))) colnames(W) <- paste("W",1:ncol(W),sep='')
-    if(is.null(colnames(X))) colnames(X) <- paste("X",1:ncol(X),sep='')
+    if(is.null(colnames(X))) colnames(X) <- paste("W",1:ncol(X),sep='')
     joint_dat <- data.frame(cbind(W,X))
     s_form <- as.formula(paste("s ~",paste(colnames(W),collapse=" + ")))
     y_form <- as.formula(paste("y ~",paste(colnames(X),collapse=" + ")))
@@ -679,7 +790,7 @@ grHeckSelect_bar <- function(W, X, s, y, group_sel, group_out,
   else{
     init <- rep(0, length(group))
   }
-  
+
   wS <- cbind(1,W[s==0,,drop=FALSE])
   wO <- cbind(1,W[s==1,,drop=FALSE])
   xO <- cbind(1,X[s==1,,drop=FALSE])
@@ -687,7 +798,7 @@ grHeckSelect_bar <- function(W, X, s, y, group_sel, group_out,
   twS <- t(wS)
   twO <- t(wO)
   txO <- t(xO)
-  
+
   if(missing(ridge_lambda)){
     if(log.ridge_lambda==TRUE){
       ridge_lambda = exp(seq(log(10*ridge_lambda.min), log(10), length.out=nridge_lambda))
@@ -695,56 +806,56 @@ grHeckSelect_bar <- function(W, X, s, y, group_sel, group_out,
       ridge_lambda = seq(10*ridge_lambda.min, 10, length.out=nridge_lambda)
     }
   }
-  
+
   if(missing(lambda)){
     hess <- -1*hesslik(est_params,wS,wO,xO,yO,twS,twO,txO)
     hesseig <- eigen(hess)
     pseudoX <- hesseig$vectors %*% diag((hesseig$values) ** (1/2)) %*% t(hesseig$vectors)
     pseudoY <- pseudoX %*% est_params
-    
+
     fity <- glm(pseudoY~pseudoX[, group==0]-1 , family="gaussian")
     r <- fity$residuals
-    
+
     lambda.max <- 0
-    
+
     for(j in 1:max(group)){
       temp_vec <- pseudoX[group==j,]%*%r
       groupgrad <- sum(solve(hess[group==j,group==j], temp_vec)*temp_vec)/sum(group==j)
-      
+
       if(groupgrad > lambda.max){
         lambda.max = groupgrad
       }
     }
-    
+
     if(log.lambda==TRUE){
       lambda = exp(seq(log(lambda.max*lambda.min), log(lambda.max), length.out=nlambda))
     } else{
       lambda = seq(lambda.max*lambda.min, lambda.max, length.out=nlambda)
     }
   }
-  
+
   llam <- length(lambda)
   lpsi <- length(ridge_lambda)
   ridge_lambda_extend <- rep(ridge_lambda, each=llam)
   lambda_extend <- rep(lambda, lpsi)
   out_params <- matrix(0,nrow=length(init),ncol=lpsi*llam)
   iter_list <- rep(0,lpsi*llam)
-  
-  
+
+
   for(i in 1:(lpsi*llam)){
     out_list <- barfit(wS, wO, xO, yO, group, ridge_lambda_extend[i], lambda_extend[i],
-                         ridge_eps, eps, inner_eps, max_iter, del, init, method, twS, twO, txO)
-      
+                       ridge_eps, eps, inner_eps, max_iter, del, init, method, twS, twO, txO)
+
     out_params[,i] <- out_list$params
     iter_list[i] <- out_list$iter
   }
-  
+
   loss <- rep(NA,ncol(out_params))
   bic <- rep(NA,ncol(out_params))
   df <- rep(NA,ncol(out_params))
-  
+
   valid_idx <- which(!is.na(out_params[1,]))
-  
+
   # In the case all of the iterations ran into errors
   if(length(valid_idx)==0){
     out <- list(params=out_params,
@@ -762,9 +873,9 @@ grHeckSelect_bar <- function(W, X, s, y, group_sel, group_out,
                 nvalid=0)
     return(out)
   }
-  
-  valid_params <- out_params[,valid_idx]
-  
+
+  valid_params <- out_params[, valid_idx, drop = FALSE]
+
   for(j in 1:max(group)){
     group_idx <- which(group==j)
     if(max(group_idx) < pS+1){
@@ -778,45 +889,50 @@ grHeckSelect_bar <- function(W, X, s, y, group_sel, group_out,
     else{
       group_norm <- abs(valid_params[group_idx,])
     }
-    
+
     zero_set <- which(group_norm < group_threshold)
     valid_params[group_idx,zero_set] = 0
   }
   # valid_params[sel_idx,] = ifelse(abs(valid_params[sel_idx,])>threshold_sel,valid_params[sel_idx,],0)
   # valid_params[out_idx,] = ifelse(abs(valid_params[out_idx,]*exp(-valid_params[pS+pO+1,]))>threshold_out,
   #                               valid_params[out_idx,],0)
-  
 
-  
-  
+
+
+
   loss[valid_idx] <- apply(valid_params,2,loglik_new,
-                wS=cbind(1,W[s==0,]),
-                wO=cbind(1,W[s==1,]),
-                xO=cbind(1,X[s==1,]),
-                yO=y[s==1])
-  
+                           wS=cbind(1,W[s==0,]),
+                           wO=cbind(1,W[s==1,]),
+                           xO=cbind(1,X[s==1,]),
+                           yO=y[s==1])
+
   df[valid_idx] <- apply(valid_params,2,function(x){return(sum(x!=0))}) - 4
   bic[valid_idx] <- df[valid_idx]*log(nrow(X)) - 2*loss[valid_idx]
   valid_params[pS+pO+2,] = tanh(valid_params[pS+pO+2,])
   valid_params[pS+pO+1,] = exp(-valid_params[pS+pO+1,])
   valid_params[(pS+1):(pS+pO),] = valid_params[(pS+1):(pS+pO),]*valid_params[pS+pO+1,]
-  
+
   out_params[,valid_idx] <- valid_params
-  
+
   opt_bic <- min(bic,na.rm=TRUE)
-  best_idx <- which(bic == opt_bic)
+  best_idx <- which(bic == opt_bic)[1L]
   opt_params <- out_params[,best_idx]
   opt_ridge_lambda <- ridge_lambda_extend[best_idx]
   opt_lambda <- lambda_extend[best_idx]
-  
-  rename <- c("(Intercept)", 
-            paste0("S:", colnames(W)), 
-            "(Intercept)", 
-            paste0("O:", colnames(X)), 
-            "sigma", "rho")
-   names(opt_params) <- rename
 
-  out <- list(params=out_params,
+  rownames(out_params) <- c("(Intercept)",colnames(W),"(Intercept)",colnames(X),"sigma","rho")
+  selection_params <- out_params[(1:pS),]
+  outcome_params <- out_params[((pS+1):(pS+pO)),]
+  sigma_params <- out_params[pS+pO+1,]
+  rho_params <- out_params[pS+pO+2,]
+  opt_selection_params <- selection_params[,best_idx]
+  opt_outcome_params <- outcome_params[,best_idx]
+  opt_sigma <- as.numeric(sigma_params[best_idx])
+  opt_rho   <- as.numeric(rho_params[best_idx])
+  params_out <- list(selection=selection_params,outcome=outcome_params,sigma=sigma_params,rho=rho_params)
+  opt_params_out <- list(selection=opt_selection_params,outcome=opt_outcome_params,sigma=opt_sigma,rho=opt_rho)
+
+  out <- list(params=params_out,
               lambda=lambda_extend,
               ridge_lambda=ridge_lambda_extend,
               df=df,
@@ -824,15 +940,16 @@ grHeckSelect_bar <- function(W, X, s, y, group_sel, group_out,
               bic=bic,
               n=nrow(X),
               iter=iter_list,
-              opt_params=opt_params,
+              opt_params=opt_params_out,
               opt_lambda=opt_lambda,
               opt_ridge_lambda=opt_ridge_lambda,
               opt_bic=opt_bic,
               nvalid= length(valid_idx))
-           class(out) <- "grHeckSelect_bar"
-  
+              class(out) <- "grHeckSelect_bar"
+
   return(out)
 }
+
 
 
 
@@ -862,9 +979,9 @@ return(x)
 
 
 barfit <- function(wS, wO, xO, yO, group, ridge_lambda=1, lambda=1,
-                   ridge_eps=1e-4, eps=1e-4, inner_eps=1e-4, max_iter=10000, del=1e-2,
-                   init,method=1, twS, twO, txO){
-  
+                             ridge_eps=1e-4, eps=1e-4, inner_eps=1e-4, max_iter=10000, del=1e-2,
+                             init,method=1, twS, twO, txO){
+
   if(missing(twS)){
     twS <- t(wS)
   }
@@ -874,18 +991,18 @@ barfit <- function(wS, wO, xO, yO, group, ridge_lambda=1, lambda=1,
   if(missing(txO)){
     txO <- t(xO)
   }
-  
+
   penalty_weights <- ifelse(group == 0, 0, 1)
   out_list <- ridgefit(wS, wO, xO, yO, ridge_lambda, ridge_eps, max_iter,
                        init, penalty_weights, twS, twO, txO)
-  
+
   ridge_init <- out_list$params
-  
+
   penalty_weights <- rep(0, length(group))
   iter <- 0
   old_params <- ridge_init
   while(iter < max_iter){
-    
+
     iter <- iter+1
     for(j in 1:max(group)){
       penalty_weights[group==j] = 1/(sum(old_params[which(group==j)]**2)+del**2)
@@ -893,26 +1010,26 @@ barfit <- function(wS, wO, xO, yO, group, ridge_lambda=1, lambda=1,
     new_params <- tryCatch({
       if(method==1){
         barfit_1(wS, wO, xO, yO, lambda, inner_eps, max_iter,
-                            old_params, penalty_weights, twS, twO, txO)
+                 old_params, penalty_weights, twS, twO, txO)
       } else if(method==2){
         barfit_2(wS, wO, xO, yO, lambda, max_iter,
-                             old_params, penalty_weights, twS, twO, txO)
+                 old_params, penalty_weights, twS, twO, txO)
       } else if(method==3){
         barfit_3(wS, wO, xO, yO, lambda, inner_eps, max_iter,
-                             old_params, penalty_weights, twS, twO, txO)
+                 old_params, penalty_weights, twS, twO, txO)
       }
     }, error=function(e){return(NA)})
-    
+
     if(any(is.na(new_params))){
       return(list(params=rep(NA,length(ridge_init)),iter=NA))
     }
-    
+
     if(max(abs(old_params - new_params)) < eps){
       break
     }
-    
+
     old_params <- new_params
-    
+
   }
   return(list(params=new_params, iter=iter))
 }
@@ -939,15 +1056,15 @@ barfit_3 <- function(wS, wO, xO, yO, lambda, eps, max_iter,
   pO <- ncol(xO)
   idx <- c(1,pS+1,pS+pO+1,pS+pO+2)
   new_params <- old_params
-  
+
   D <- diag(penalty_weights)[-idx,-idx]
   H <- -1*hesslik_3(old_params, wS, wO, xO, yO, twS, twO, txO)[-idx,-idx]
   g <- -1*gradlik_3(old_params, wS, wO, xO, yO, twS, twO, txO)[-idx]
-  
+
   new_params[-idx] <- solve(H + lambda*D, H%*%(old_params[-idx]) - g)
   out_list <- ridgefit_2(wS, wO, xO, yO, eps, max_iter,
                          new_params, twS, twO, txO, idx)
-  
+
   return(out_list$params)
 }
 
@@ -961,18 +1078,18 @@ barfit_3 <- function(wS, wO, xO, yO, lambda, eps, max_iter,
 #   hesseig <- eigen(hess)
 #   pseudoX <- hesseig$vectors %*% diag((hesseig$values) ** (1/2)) %*% t(hesseig$vectors)
 #   pseudoY <- pseudoX %*% old_params
-#   
+#
 #   scale <- apply(pseudoX, 2, function(x){sqrt(sum(x**2)/nrow(pseudoX))})
 #   XX <- pseudoX %*% diag(1/scale)
-#   
+#
 #   g_order <- order(group)
 #   g_order_inv <- match(1:length(group),g_order)
-#   
+#
 #   XX_ord <- XX[,g_order]
-#   
+#
 #   g <- group[g_order]
 #   n <- nrow(XX_ord)
-#   
+#
 #   XX_orth <- orthogonalize(XX_ord,g)
 #   order_params <- old_params*scale
 #   order_params <- order_params[g_order]
@@ -997,9 +1114,9 @@ barfit_3 <- function(wS, wO, xO, yO, lambda, eps, max_iter,
 #   new_params <- new_params[g_order_inv]
 #   print(new_params)
 #   new_params <- new_params/scale
-#   
+#
 #   print(new_params)
-#   
+#
 #   out_list <- ridgefit_2(wS, wO, xO, yO, eps, max_iter,
 #                          new_params, twS, twO, txO, idx)
 #   return(out_list$params)
@@ -1009,7 +1126,7 @@ barfit_3 <- function(wS, wO, xO, yO, lambda, eps, max_iter,
 
 ridgefit <- function(wS, wO, xO, yO, lambda, eps, max_iter,
                      init, penalty_weights, twS, twO, txO){
-  
+
   if(missing(twS)){
     twS <- t(wS)
   }
@@ -1019,7 +1136,7 @@ ridgefit <- function(wS, wO, xO, yO, lambda, eps, max_iter,
   if(missing(txO)){
     txO <- t(xO)
   }
-  
+
   iter <- 0
   current_pen <- lambda * penalty_weights
   converged <- FALSE
@@ -1030,14 +1147,14 @@ ridgefit <- function(wS, wO, xO, yO, lambda, eps, max_iter,
     iter <- iter + 1
     old_params <- params
     grad <- -1*gradlik(old_params, wS, wO, xO, yO, twS, twO, txO) + current_pen*params
-      
+
     if(sqrt(sum(grad**2)) < eps){
       converged = TRUE
       break
     }
-      
+
     hess <- -1*hesslik(old_params, wS, wO, xO, yO, twS, twO, txO) + diag(current_pen)
-      
+
     change <- solve(hess,grad)
     params <- old_params - change
     new_loglik <- -1*loglik_new(params, wS, wO, xO, yO) + 0.5*sum(current_pen * params**2)
@@ -1047,15 +1164,15 @@ ridgefit <- function(wS, wO, xO, yO, lambda, eps, max_iter,
       params <- old_params - change
       new_loglik <- -1*loglik_new(params, wS, wO, xO, yO) + 0.5*sum(current_pen * params**2)
     }
-      
+
     if(abs(old_loglik - new_loglik) < eps){
       converged = TRUE
       break
     }
-    
+
     old_loglik <- new_loglik
   }
-  
+
   if(converged==FALSE){
     print("nonconvergence")
   }
@@ -1064,10 +1181,10 @@ ridgefit <- function(wS, wO, xO, yO, lambda, eps, max_iter,
 }
 
 ridgefit_2 <- function(wS, wO, xO, yO, eps, max_iter,
-                     init, twS, twO, txO, idx){
-  
+                       init, twS, twO, txO, idx){
+
   p <- max(idx)
-  
+
   if(missing(twS)){
     twS <- t(wS)
   }
@@ -1077,7 +1194,7 @@ ridgefit_2 <- function(wS, wO, xO, yO, eps, max_iter,
   if(missing(txO)){
     txO <- t(xO)
   }
-  
+
   iter <- 0
   converged <- FALSE
   params <- init
@@ -1091,7 +1208,7 @@ ridgefit_2 <- function(wS, wO, xO, yO, eps, max_iter,
       converged = TRUE
       break
     }
-    
+
     hess <- -1*hesslik_2(old_params, wS, wO, xO, yO, twS, twO, txO)[idx,idx]
     change <- rep(0,p)
     change[idx] <- solve(hess,grad)
@@ -1103,26 +1220,28 @@ ridgefit_2 <- function(wS, wO, xO, yO, eps, max_iter,
       params <- old_params - change
       new_loglik <- -1*loglik_new(params, wS, wO, xO, yO)
     }
-    
+
     if(abs(old_loglik - new_loglik) < eps){
       converged = TRUE
       break
     }
-    
+
     old_loglik <- new_loglik
   }
-  
+
   if(converged==FALSE){
     print("nonconvergence")
   }
-  
+
   return(list(params=params, iter=iter, converged=converged))
 }
+
+
 
 hesslik <- function(params,
                     wS,wO,xO,yO,
                     twS,twO,txO) {
-  
+
   if(missing(twS)){
     twS <- t(wS)
   }
@@ -1132,7 +1251,7 @@ hesslik <- function(params,
   if(missing(txO)){
     txO <- t(xO)
   }
-  
+
   pS = ncol(wS)
   pO = ncol(xO)
   alpha = params[1:pS]
@@ -1141,33 +1260,33 @@ hesslik <- function(params,
   rho = params[pS+pO+2]
   nOO = nrow(wO)
   nS = nrow(wS)
-  
+
   sinhrho = sinh(rho)
   coshrho = cosh(rho)
   expsigma = exp(sigma)
-  
+
   res0 = as.vector(-1 * wS %*% alpha)
   res1 = as.vector(wO %*% alpha)
   res2 = as.vector(expsigma * yO - xO %*% beta)
   res3 = as.vector(coshrho * res1 + sinhrho * res2)
-  
+
   res0_imr = res0
   res0_imr = exp(dnorm(res0_imr, log=TRUE) - pnorm(res0_imr, log.p=TRUE))
   res0_imr = -1 * res0_imr * (res0 + res0_imr)
-  
-  
+
+
   v2 = as.vector(res3)
   v2 = exp(dnorm(v2, log=TRUE) - pnorm(v2, log.p=TRUE))
-  
+
   v3 = -1 * v2 * (v2 + res3)
-  
+
   hess = matrix(0, nrow = pS + pO + 2, ncol = pS + pO + 2)
-  
+
   v4 = v3 * sinhrho**2
   v5 = sinhrho * res1 + coshrho * res2
   v6 = v3 * v5
   m1 = wO * v3
-  
+
   hess[1:pS,1:pS] = coshrho**2 * (twO %*% m1) + twS %*% (wS * res0_imr)
   hess[(pS+1):(pS+pO),1:pS] = -1 * sinh(2 * rho) / 2 * (txO %*% m1)
   hess[(pS+1):(pS+pO),(pS+1):(pS+pO)] = txO %*% (xO * (v4 - 1))
@@ -1183,7 +1302,6 @@ hesslik <- function(params,
   return(hess)
 }
 
-
 gradlik <- function(params,wS,wO,xO,yO,twS,twO,txO){
   pS = ncol(wS)
   pO = ncol(xO)
@@ -1196,31 +1314,32 @@ gradlik <- function(params,wS,wO,xO,yO,twS,twO,txO){
   expsigma = exp(sigma)
   coshrho = cosh(rho)
   sinhrho = sinh(rho)
-  
+
   res0 = -1 * wS %*% alpha
   res1 = wO %*% alpha
   res2 = expsigma*yO - xO %*% beta
   res3 = coshrho * res1 + sinhrho * res2
-  
+
   v4 = sinhrho * res1 + coshrho * res2
-  
-  
+
+
   res0 = exp(dnorm(res0, log=TRUE) - pnorm(res0, log.p=TRUE))
-  
+
   res3 = exp(dnorm(res3, log=TRUE) - pnorm(res3, log.p=TRUE))
-  
+
   v5 = res2 - sinhrho * res3
-  
+
   out <- rep(0,pS+pO+2)
-  
+
   out[1:pS] = coshrho * (twO %*% res3) - twS %*% res0;
   out[(pS+1):(pS+pO)] = txO %*% v5
   out[pS+pO+1] = nO - expsigma * sum(yO * v5)
   out[pS+pO+2] = sum(res3 * v4)
-  
-  
+
+
   return(out)
 }
+
 
 
 #####################
@@ -1241,37 +1360,37 @@ gradlik_2 <- function(params,wS,wO,xO,yO,twS,twO,txO){
   w1S <- wS[,1]
   w1O <- wO[,1]
   x1O <- xO[,1]
-  
-  
+
+
   res0 = -1 * wS %*% alpha
   res1 = wO %*% alpha
   res2 = expsigma*yO - xO %*% beta
   res3 = coshrho * res1 + sinhrho * res2
-  
+
   v4 = sinhrho * res1 + coshrho * res2
-  
-  
+
+
   res0 = exp(dnorm(res0, log=TRUE) - pnorm(res0, log.p=TRUE))
-  
+
   res3 = exp(dnorm(res3, log=TRUE) - pnorm(res3, log.p=TRUE))
-  
+
   v5 = res2 - sinhrho * res3
-  
+
   out <- rep(0,pS+pO+2)
-  
+
   out[1] <- coshrho * sum(w1O * res3) - sum(w1S * res0)
   out[pS+1] <- sum(x1O * v5)
   out[pS+pO+1] = nO - expsigma * sum(yO * v5)
   out[pS+pO+2] = sum(res3 * v4)
-  
-  
+
+
   return(out)
 }
 
 hesslik_2 <- function(params,
                       wS,wO,xO,yO,
                       twS,twO,txO) {
-  
+
   if(missing(twS)){
     twS <- t(wS)
   }
@@ -1281,7 +1400,7 @@ hesslik_2 <- function(params,
   if(missing(txO)){
     txO <- t(xO)
   }
-  
+
   pS = ncol(wS)
   pO = ncol(xO)
   alpha = params[1:pS]
@@ -1290,38 +1409,38 @@ hesslik_2 <- function(params,
   rho = params[pS+pO+2]
   nOO = nrow(wO)
   nS = nrow(wS)
-  
+
   w1S <- wS[,1]
   w1O <- wO[,1]
   x1O <- xO[,1]
-  
+
   sinhrho = sinh(rho)
   coshrho = cosh(rho)
   expsigma = exp(sigma)
-  
+
   res0 = as.vector(-1 * wS %*% alpha)
   res1 = as.vector(wO %*% alpha)
   res2 = as.vector(expsigma * yO - xO %*% beta)
   res3 = as.vector(coshrho * res1 + sinhrho * res2)
-  
+
   res0_imr = res0
   res0_imr = exp(dnorm(res0_imr, log=TRUE) - pnorm(res0_imr, log.p=TRUE))
   res0_imr = -1 * res0_imr * (res0 + res0_imr)
-  
-  
+
+
   v2 = as.vector(res3)
   v2 = exp(dnorm(v2, log=TRUE) - pnorm(v2, log.p=TRUE))
-  
+
   v3 = -1 * v2 * (v2 + res3)
-  
+
   hess = matrix(0, nrow = pS + pO + 2, ncol = pS + pO + 2)
-  
+
   v4 = v3 * sinhrho**2
   v5 = sinhrho * res1 + coshrho * res2
   v6 = v3 * v5
-  
+
   twOwO <- twO %*% wO
-  
+
   hess[1,1] = coshrho**2 * sum(w1O**2 * v3) + sum(w1S**2 * res0_imr)
   hess[pS+1,1] = -1/2 * sinh(2*rho) * sum(x1O * w1O * v3)
   hess[1,pS+1] = hess[pS+1,1]
@@ -1354,33 +1473,33 @@ gradlik_3 <- function(params,wS,wO,xO,yO,twS,twO,txO){
   expsigma = exp(sigma)
   coshrho = cosh(rho)
   sinhrho = sinh(rho)
-  
+
   res0 = -1 * wS %*% alpha
   res1 = wO %*% alpha
   res2 = expsigma*yO - xO %*% beta
   res3 = coshrho * res1 + sinhrho * res2
-  
-  
-  
+
+
+
   res0 = exp(dnorm(res0, log=TRUE) - pnorm(res0, log.p=TRUE))
-  
+
   res3 = exp(dnorm(res3, log=TRUE) - pnorm(res3, log.p=TRUE))
-  
+
   v5 = res2 - sinhrho * res3
-  
+
   out <- rep(0,pS+pO+2)
-  
+
   out[1:pS] = coshrho * (twO %*% res3) - twS %*% res0;
   out[(pS+1):(pS+pO)] = txO %*% v5
-  
-  
+
+
   return(out)
 }
 
 hesslik_3 <- function(params,
                       wS,wO,xO,yO,
                       twS,twO,txO) {
-  
+
   if(missing(twS)){
     twS <- t(wS)
   }
@@ -1390,7 +1509,7 @@ hesslik_3 <- function(params,
   if(missing(txO)){
     txO <- t(xO)
   }
-  
+
   pS = ncol(wS)
   pO = ncol(xO)
   alpha = params[1:pS]
@@ -1399,31 +1518,31 @@ hesslik_3 <- function(params,
   rho = params[pS+pO+2]
   nOO = nrow(wO)
   nS = nrow(wS)
-  
+
   sinhrho = sinh(rho)
   coshrho = cosh(rho)
   expsigma = exp(sigma)
-  
+
   res0 = as.vector(-1 * wS %*% alpha)
   res1 = as.vector(wO %*% alpha)
   res2 = as.vector(expsigma * yO - xO %*% beta)
   res3 = as.vector(coshrho * res1 + sinhrho * res2)
-  
+
   res0_imr = res0
   res0_imr = exp(dnorm(res0_imr, log=TRUE) - pnorm(res0_imr, log.p=TRUE))
   res0_imr = -1 * res0_imr * (res0 + res0_imr)
-  
-  
+
+
   v2 = as.vector(res3)
   v2 = exp(dnorm(v2, log=TRUE) - pnorm(v2, log.p=TRUE))
-  
+
   v3 = -1 * v2 * (v2 + res3)
-  
+
   hess = matrix(0, nrow = pS + pO + 2, ncol = pS + pO + 2)
-  
+
   v4 = v3 * sinhrho**2
   m1 = wO * v3
-  
+
   hess[1:pS,1:pS] = coshrho**2 * (twO %*% m1) + twS %*% (wS * res0_imr)
   hess[(pS+1):(pS+pO),1:pS] = -1 * sinh(2 * rho) / 2 * (txO %*% m1)
   hess[(pS+1):(pS+pO),(pS+1):(pS+pO)] = txO %*% (xO * (v4 - 1))
